@@ -2,24 +2,30 @@ import express, { Request, Response } from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import * as path from "path";
+import {
+  initDatabase,
+  saveMerchantEntity,
+  fetchAllMerchants,
+  savePaymentReceipt,
+  checkPaymentReceipt,
+} from "./db.js";
 
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
-// Wallet addresses and micro-pricing for agentic multi-chain settlement
+// Multi-chain settlement parameters
 const AGENT_SETTLEMENT = {
   evm_base_wallet: "0xd10c3ee95466eec2cb89d9eff63d1446b371e59d",
   solana_wallet: "BqW6DZGrasYgJcEnQPzzSAmSH6ty4gdVydPkjKoxdmpE",
   usdc_amount: "1.00",
-  sol_amount: "0.006", // Equivalent $1.00 micro-fee in SOL
+  sol_amount: "0.006",
   fiat_amount: "1.00",
 };
 
-// In-memory registry of created entities for AG Grid
-const merchantRegistry: any[] = [];
-// In-memory ledger of settled payment tokens / tx hashes
-const paidReceipts = new Set<string>();
+// In-memory fallback if no DB connection is active
+const fallbackRegistry: any[] = [];
+const fallbackReceipts = new Set<string>();
 
 // Helper to run MCP delegation pipeline
 async function delegateAgentTask(userInput: {
@@ -50,7 +56,7 @@ async function delegateAgentTask(userInput: {
   const wikiClient = new Client({ name: "web-runner", version: "1.0.0" }, { capabilities: {} });
   await wikiClient.connect(wikiTransport);
 
-  // 1a. Discovery MCP: Profile Extraction
+  // 1a. Profile Extraction
   const profileRes: any = await discoveryClient.callTool({
     name: "extract_merchant_profile",
     arguments: {
@@ -61,7 +67,7 @@ async function delegateAgentTask(userInput: {
   });
   const profileData = JSON.parse(profileRes.content[0].text);
 
-  // 1b. Discovery MCP: Metric Standardization
+  // 1b. Metrics Standardization
   const metricsRes: any = await discoveryClient.callTool({
     name: "resolve_business_metrics",
     arguments: {
@@ -71,7 +77,7 @@ async function delegateAgentTask(userInput: {
   });
   const metricsData = JSON.parse(metricsRes.content[0].text);
 
-  // 1c. Discovery MCP: Wikimedia Commons Public Asset Lookup
+  // 1c. Wikimedia Commons Asset Lookup
   let commonsAsset: { filename: string | null; mediaUrl: string | null; license: string | null } = {
     filename: null,
     mediaUrl: null,
@@ -84,10 +90,10 @@ async function delegateAgentTask(userInput: {
     });
     commonsAsset = JSON.parse(commonsRes.content[0].text);
   } catch (err) {
-    console.warn("Wikimedia Commons asset lookup skipped:", err);
+    console.warn("Wikimedia Commons lookup skipped:", err);
   }
 
-  // 2. PayPal Agentic Link (The core hackathon payment rail)
+  // 2. PayPal Agentic Link
   let checkoutUrl = "";
   try {
     const payRes: any = await paypalClient.callTool({
@@ -105,7 +111,7 @@ async function delegateAgentTask(userInput: {
     checkoutUrl = "https://sandbox.paypal.com";
   }
 
-  // 3a. Wiki Entity Generation (Passing Commons assets)
+  // 3a. Wiki Entity Generation
   const wikiRes: any = await wikiClient.callTool({
     name: "generate_wiki_entity",
     arguments: {
@@ -122,7 +128,7 @@ async function delegateAgentTask(userInput: {
   });
   const wikiData = JSON.parse(wikiRes.content[0].text);
 
-  // 3b. AEO Schema Synthesis (Passing Commons logo URL)
+  // 3b. AEO Schema Synthesis
   const aeoRes: any = await wikiClient.callTool({
     name: "generate_aeo_entity_payload",
     arguments: {
@@ -137,7 +143,7 @@ async function delegateAgentTask(userInput: {
   });
   const aeoData = JSON.parse(aeoRes.content[0].text);
 
-  // 4. Record Assembly
+  // 4. Assemble Record
   const record = {
     id: `ENT-${Date.now().toString().slice(-4)}`,
     companyName: profileData.companyName,
@@ -155,18 +161,33 @@ async function delegateAgentTask(userInput: {
     commonsLicense: commonsAsset.license,
   };
 
-  merchantRegistry.unshift(record);
+  // Persist to Postgres (and in-memory fallback)
+  try {
+    await saveMerchantEntity(record);
+  } catch (err) {
+    console.error("Failed to persist to Postgres:", err);
+  }
+  fallbackRegistry.unshift(record);
+
   return record;
 }
 
 // -------------------------------------------------------------
 // Human Dashboard API Routes (AG Grid)
 // -------------------------------------------------------------
-app.get("/api/merchants", (req, res) => {
-  res.json(merchantRegistry);
+app.get("/api/merchants", async (_req: Request, res: Response) => {
+  try {
+    const merchants = await fetchAllMerchants();
+    if (merchants.length > 0) {
+      return res.json(merchants);
+    }
+  } catch (err) {
+    console.warn("DB fetch failed, using memory:", err);
+  }
+  res.json(fallbackRegistry);
 });
 
-app.post("/api/create-entity", async (req, res) => {
+app.post("/api/create-entity", async (req: Request, res: Response) => {
   try {
     const record = await delegateAgentTask(req.body);
     res.json({ success: true, record });
@@ -178,18 +199,20 @@ app.post("/api/create-entity", async (req, res) => {
 // -------------------------------------------------------------
 // Autonomous Agent API: x402 Marketplace (PayPal, Base, Solana)
 // -------------------------------------------------------------
-app.post("/api/v1/aeo/create-entity", async (req, res) => {
-  // Support standard x402 headers (V1/V2 headers)
-  const paymentProof =
+app.post("/api/v1/aeo/create-entity", async (req: Request, res: Response) => {
+  const paymentProof = (
     req.headers["x-payment-proof"] ||
     req.headers["payment-signature"] ||
-    req.headers["x-402-token"];
+    req.headers["x-402-token"]
+  ) as string;
 
-  // 1. If no payment proof is provided, return HTTP 402 with multi-rail instructions
-  if (!paymentProof || !paidReceipts.has(paymentProof as string)) {
+  const isPaid = paymentProof
+    ? (await checkPaymentReceipt(paymentProof)) || fallbackReceipts.has(paymentProof)
+    : false;
+
+  if (!paymentProof || !isPaid) {
     const paypalInvoiceToken = `PAYPAL-INV-${Date.now()}`;
 
-    // Standard x402 response headers
     res.setHeader("X-402-Status", "Payment Required");
     res.setHeader("X-402-Price-USD", AGENT_SETTLEMENT.fiat_amount);
     res.setHeader("X-402-Networks", "paypal, base, solana");
@@ -232,7 +255,6 @@ app.post("/api/v1/aeo/create-entity", async (req, res) => {
     });
   }
 
-  // 2. Proof validated: run MCP pipeline and return AEO dossier
   try {
     const record = await delegateAgentTask(req.body);
     return res.status(200).json({
@@ -247,17 +269,23 @@ app.post("/api/v1/aeo/create-entity", async (req, res) => {
 });
 
 // Settlement webhook for automated payments
-app.post("/api/v1/aeo/verify-payment", (req, res) => {
+app.post("/api/v1/aeo/verify-payment", async (req: Request, res: Response) => {
   const { orderId, txHash } = req.body;
   const receipt = orderId || txHash;
   if (receipt) {
-    paidReceipts.add(receipt);
+    try {
+      await savePaymentReceipt(receipt);
+    } catch (e) {
+      console.warn("DB receipt save skipped, using memory:", e);
+    }
+    fallbackReceipts.add(receipt);
     return res.json({ status: "settled", receipt });
   }
   return res.status(400).json({ error: "Missing orderId or txHash" });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  await initDatabase();
   console.log(`WikiBiz Agent UI running at: http://localhost:${PORT}`);
 });
