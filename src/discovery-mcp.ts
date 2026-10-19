@@ -10,6 +10,37 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+// Helper function to query Wikimedia Commons via its standard Action API
+async function fetchCommonsLogo(companyName: string) {
+  try {
+    const query = encodeURIComponent(`${companyName} logo`);
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${query}&gsrlimit=1&prop=imageinfo&iiprop=url|extmetadata&format=json`;
+
+    const response = await axios.get(url, {
+      headers: {
+        "User-Agent": "WikiBizAgent/1.0 (https://wikibiz-agent.onrender.com; agent@wikibiz.org)",
+      },
+      timeout: 6000,
+    });
+
+    const data = response.data;
+    if (!data.query?.pages) {
+      return { filename: null, mediaUrl: null, license: null };
+    }
+
+    const page = Object.values(data.query.pages)[0] as any;
+    const imgInfo = page.imageinfo?.[0];
+
+    return {
+      filename: page.title || null, // e.g. "File:Company_Logo.svg"
+      mediaUrl: imgInfo?.url || null,
+      license: imgInfo?.extmetadata?.LicenseShortName?.value || "Public Domain / CC",
+    };
+  } catch {
+    return { filename: null, mediaUrl: null, license: null };
+  }
+}
+
 // Tool 1: Extract company identity, metadata, and site content
 server.tool(
   "extract_merchant_profile",
@@ -103,6 +134,25 @@ server.tool(
             null,
             2
           ),
+        },
+      ],
+    };
+  }
+);
+
+// Tool 3: Lookup Wikimedia Commons corporate assets & open public licenses
+server.tool(
+  "lookup_wikimedia_commons_assets",
+  {
+    companyName: z.string().describe("Company or merchant name to search on Commons"),
+  },
+  async ({ companyName }) => {
+    const asset = await fetchCommonsLogo(companyName);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(asset, null, 2),
         },
       ],
     };

@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import * as path from "path";
@@ -50,7 +50,7 @@ async function delegateAgentTask(userInput: {
   const wikiClient = new Client({ name: "web-runner", version: "1.0.0" }, { capabilities: {} });
   await wikiClient.connect(wikiTransport);
 
-  // 1. Discovery MCP Delegation
+  // 1a. Discovery MCP: Profile Extraction
   const profileRes: any = await discoveryClient.callTool({
     name: "extract_merchant_profile",
     arguments: {
@@ -61,6 +61,7 @@ async function delegateAgentTask(userInput: {
   });
   const profileData = JSON.parse(profileRes.content[0].text);
 
+  // 1b. Discovery MCP: Metric Standardization
   const metricsRes: any = await discoveryClient.callTool({
     name: "resolve_business_metrics",
     arguments: {
@@ -69,6 +70,22 @@ async function delegateAgentTask(userInput: {
     },
   });
   const metricsData = JSON.parse(metricsRes.content[0].text);
+
+  // 1c. Discovery MCP: Wikimedia Commons Public Asset Lookup
+  let commonsAsset: { filename: string | null; mediaUrl: string | null; license: string | null } = {
+    filename: null,
+    mediaUrl: null,
+    license: null,
+  };
+  try {
+    const commonsRes: any = await discoveryClient.callTool({
+      name: "lookup_wikimedia_commons_assets",
+      arguments: { companyName: profileData.companyName },
+    });
+    commonsAsset = JSON.parse(commonsRes.content[0].text);
+  } catch (err) {
+    console.warn("Wikimedia Commons asset lookup skipped:", err);
+  }
 
   // 2. PayPal Agentic Link (The core hackathon payment rail)
   let checkoutUrl = "";
@@ -88,7 +105,7 @@ async function delegateAgentTask(userInput: {
     checkoutUrl = "https://sandbox.paypal.com";
   }
 
-  // 3. Wiki Entity & AEO Synthesizer
+  // 3a. Wiki Entity Generation (Passing Commons assets)
   const wikiRes: any = await wikiClient.callTool({
     name: "generate_wiki_entity",
     arguments: {
@@ -99,10 +116,13 @@ async function delegateAgentTask(userInput: {
       website: profileData.website,
       summary: profileData.summary,
       paypalCheckoutUrl: checkoutUrl,
+      commonsFile: commonsAsset.filename || undefined,
+      commonsLogoUrl: commonsAsset.mediaUrl || undefined,
     },
   });
   const wikiData = JSON.parse(wikiRes.content[0].text);
-  // Call AEO schema synthesizer tool
+
+  // 3b. AEO Schema Synthesis (Passing Commons logo URL)
   const aeoRes: any = await wikiClient.callTool({
     name: "generate_aeo_entity_payload",
     arguments: {
@@ -112,10 +132,12 @@ async function delegateAgentTask(userInput: {
       employeeCount: metricsData.employeeCount,
       website: profileData.website,
       summary: profileData.summary,
+      commonsLogoUrl: commonsAsset.mediaUrl || undefined,
     },
   });
   const aeoData = JSON.parse(aeoRes.content[0].text);
 
+  // 4. Record Assembly
   const record = {
     id: `ENT-${Date.now().toString().slice(-4)}`,
     companyName: profileData.companyName,
@@ -129,6 +151,8 @@ async function delegateAgentTask(userInput: {
     wikitext: wikiData.wikitext,
     htmlPreview: wikiData.htmlPreview,
     schemaJsonLd: aeoData.schemaJsonLd,
+    commonsLogo: commonsAsset.mediaUrl,
+    commonsLicense: commonsAsset.license,
   };
 
   merchantRegistry.unshift(record);
