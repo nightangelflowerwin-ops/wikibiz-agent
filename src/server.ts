@@ -102,6 +102,19 @@ async function delegateAgentTask(userInput: {
     },
   });
   const wikiData = JSON.parse(wikiRes.content[0].text);
+  // Call AEO schema synthesizer tool
+  const aeoRes: any = await wikiClient.callTool({
+    name: "generate_aeo_entity_payload",
+    arguments: {
+      companyName: profileData.companyName,
+      founder: profileData.founder,
+      location: metricsData.standardizedLocation,
+      employeeCount: metricsData.employeeCount,
+      website: profileData.website,
+      summary: profileData.summary,
+    },
+  });
+  const aeoData = JSON.parse(aeoRes.content[0].text);
 
   const record = {
     id: `ENT-${Date.now().toString().slice(-4)}`,
@@ -115,6 +128,7 @@ async function delegateAgentTask(userInput: {
     checkoutUrl,
     wikitext: wikiData.wikitext,
     htmlPreview: wikiData.htmlPreview,
+    schemaJsonLd: aeoData.schemaJsonLd,
   };
 
   merchantRegistry.unshift(record);
