@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -19,8 +19,32 @@ import {
 } from "./db.js";
 
 const app = express();
+
+// -------------------------------------------------------------
+// CORS & Preflight Middleware for Autonomous Client Sandboxes
+// -------------------------------------------------------------
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Payment-Proof, Payment-Signature, X-402-Token"
+  );
+  res.header(
+    "Access-Control-Expose-Headers",
+    "X-402-Status, X-402-Price-USD, X-402-Networks, X-Accept-Payment, X-Payment-Amount, X-Payment-Currency, X-Payment-Recipient-EVM, X-Payment-Recipient-Solana, Link"
+  );
+
+  // Broadcast OpenAPI discovery link to all API consumers
+  res.header("Link", '</openapi.json>; rel="service-desc"');
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json());
-// Allow dotfiles so .well-known assets are served
 app.use(express.static("public", { dotfiles: "allow" }));
 
 // Multi-chain agent settlement targets
@@ -42,7 +66,6 @@ const fallbackReceipts = new Set<string>();
 
 // 1. PayPal REST Verifier
 async function verifyPayPalOrder(orderId: string): Promise<boolean> {
-  // Test/sandbox simulator tokens bypass external API check
   if (
     orderId.startsWith("PAYPAL-INV-SIM") ||
     orderId.startsWith("TEST-") ||
@@ -518,6 +541,20 @@ app.get("/.well-known/mcp.json", (_req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
+// Orchestrator Health & Liveness Check
+// -------------------------------------------------------------
+app.get("/health", (_req: Request, res: Response) => {
+  res.setHeader("Content-Type", "application/json");
+  return res.json({
+    status: "healthy",
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    service: "WikiBiz Autonomous Registry",
+    rails: ["paypal", "base", "solana"],
+  });
+});
+
+// -------------------------------------------------------------
 // Human Dashboard API Routes
 // -------------------------------------------------------------
 app.get("/api/merchants", async (_req: Request, res: Response) => {
@@ -656,6 +693,11 @@ app.get("/entity/:slug", async (req: Request, res: Response) => {
 
   const jsonLdString = JSON.stringify(entity.schemaJsonLd || {}, null, 2);
 
+  // Link header pointing directly to the raw machine-readable JSON-LD alternate representation
+  res.setHeader(
+    "Link",
+    `<https://wikibiz-agent.onrender.com/api/v1/entities/${slug}/json-ld>; rel="alternate"; type="application/ld+json"`
+  );
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   return res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -664,6 +706,7 @@ app.get("/entity/:slug", async (req: Request, res: Response) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${entity.companyName} | WikiBiz Verified Profile</title>
   <meta name="description" content="Verified corporate profile, Wikipedia-style infobox, and PayPal checkout rail for ${entity.companyName}.">
+  <link rel="alternate" type="application/ld+json" href="/api/v1/entities/${slug}/json-ld">
   <script type="application/ld+json">
 ${jsonLdString}
   </script>
@@ -749,9 +792,15 @@ app.post("/api/v1/aeo/create-entity", async (req: Request, res: Response) => {
   if (!paymentProof || !isPaid) {
     const paypalInvoiceToken = `PAYPAL-INV-${Date.now()}`;
 
+    // Standardized Agent Negotiation Headers
     res.setHeader("X-402-Status", "Payment Required");
     res.setHeader("X-402-Price-USD", AGENT_SETTLEMENT.fiat_amount);
     res.setHeader("X-402-Networks", "paypal, base, solana");
+    res.setHeader("X-Accept-Payment", "paypal, base-mainnet, solana-mainnet");
+    res.setHeader("X-Payment-Currency", "USD");
+    res.setHeader("X-Payment-Amount", AGENT_SETTLEMENT.fiat_amount);
+    res.setHeader("X-Payment-Recipient-EVM", AGENT_SETTLEMENT.evm_base_wallet);
+    res.setHeader("X-Payment-Recipient-Solana", AGENT_SETTLEMENT.solana_wallet);
 
     return res.status(402).json({
       status: 402,
