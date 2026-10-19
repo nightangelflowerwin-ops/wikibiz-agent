@@ -157,3 +157,26 @@ export async function checkPaymentReceipt(receipt: string): Promise<boolean> {
   );
   return (res.rowCount ?? 0) > 0;
 }
+
+// Slug Generator for Search & AI Crawlers
+export function slugify(text: string): string {
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^\w\-]+/g, "")
+    .replace(/\-\-+/g, "-");
+}
+
+// Entity Lookup by Slug or ID
+export async function fetchMerchantBySlug(slug: string): Promise<any | null> {
+  const all = await fetchAllMerchants();
+  return (
+    all.find(
+      (m) =>
+        slugify(m.companyName) === slug ||
+        m.id.toLowerCase() === slug.toLowerCase()
+    ) || null
+  );
+}

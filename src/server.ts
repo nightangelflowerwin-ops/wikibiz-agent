@@ -27,6 +27,69 @@ const AGENT_SETTLEMENT = {
 const fallbackRegistry: any[] = [];
 const fallbackReceipts = new Set<string>();
 
+// Helper to verify PayPal Order ID directly against PayPal REST API
+async function verifyPayPalOrder(orderId: string): Promise<boolean> {
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  const envMode = process.env.PAYPAL_ENV || "sandbox";
+
+  // Fallback to simulation mode if API credentials are not provided
+  if (!clientId || !clientSecret) {
+    console.warn("PayPal credentials missing; operating in simulation mode.");
+    return orderId.startsWith("PAYPAL-") || orderId.startsWith("ORD-");
+  }
+
+  const baseUrl =
+    envMode === "live"
+      ? "https://api-m.paypal.com"
+      : "https://api-m.sandbox.paypal.com";
+
+  try {
+    const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+    const tokenRes = await fetch(`${baseUrl}/v1/oauth2/token`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${authHeader}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: "grant_type=client_credentials",
+    });
+
+    if (!tokenRes.ok) {
+      console.error("Failed to authenticate with PayPal API:", await tokenRes.text());
+      return false;
+    }
+
+    const { access_token } = (await tokenRes.json()) as { access_token: string };
+
+    const orderRes = await fetch(`${baseUrl}/v2/checkout/orders/${orderId}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!orderRes.ok) {
+      console.error(`PayPal order lookup failed for ${orderId}:`, await orderRes.text());
+      return false;
+    }
+
+    const orderData = (await orderRes.json()) as any;
+    const isCompleted = orderData.status === "COMPLETED" || orderData.status === "APPROVED";
+    const amountVal = orderData.purchase_units?.[0]?.amount?.value;
+
+    if (isCompleted && parseFloat(amountVal || "0") >= 1.0) {
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("PayPal verification network exception:", error);
+    return false;
+  }
+}
+
 // Helper to run MCP delegation pipeline
 async function delegateAgentTask(userInput: {
   companyName: string;
@@ -90,7 +153,7 @@ async function delegateAgentTask(userInput: {
     });
     commonsAsset = JSON.parse(commonsRes.content[0].text);
   } catch (err) {
-    console.warn("Wikimedia Commons lookup skipped:", err);
+    console.warn("Wikimedia Commons asset lookup skipped:", err);
   }
 
   // 2. PayPal Agentic Link
@@ -111,7 +174,7 @@ async function delegateAgentTask(userInput: {
     checkoutUrl = "https://sandbox.paypal.com";
   }
 
-  // 3a. Wiki Entity Generation
+  // 3a. Wiki Entity Generation (Passing Commons metadata)
   const wikiRes: any = await wikiClient.callTool({
     name: "generate_wiki_entity",
     arguments: {
@@ -128,7 +191,7 @@ async function delegateAgentTask(userInput: {
   });
   const wikiData = JSON.parse(wikiRes.content[0].text);
 
-  // 3b. AEO Schema Synthesis
+  // 3b. AEO Schema Synthesis (Passing Commons logo URL)
   const aeoRes: any = await wikiClient.callTool({
     name: "generate_aeo_entity_payload",
     arguments: {
@@ -165,7 +228,7 @@ async function delegateAgentTask(userInput: {
   try {
     await saveMerchantEntity(record);
   } catch (err) {
-    console.error("Failed to persist to Postgres:", err);
+    console.error("Failed to persist record to database:", err);
   }
   fallbackRegistry.unshift(record);
 
@@ -178,11 +241,11 @@ async function delegateAgentTask(userInput: {
 app.get("/api/merchants", async (_req: Request, res: Response) => {
   try {
     const merchants = await fetchAllMerchants();
-    if (merchants.length > 0) {
+    if (merchants && merchants.length > 0) {
       return res.json(merchants);
     }
   } catch (err) {
-    console.warn("DB fetch failed, using memory:", err);
+    console.warn("Database fetch failed, falling back to memory:", err);
   }
   res.json(fallbackRegistry);
 });
@@ -223,7 +286,8 @@ app.post("/api/v1/aeo/create-entity", async (req: Request, res: Response) => {
       protocol: "x402",
       service: {
         name: "WikiBiz Autonomous AEO Knowledge Synthesizer",
-        description: "Creates verified Wikipedia infoboxes, Schema.org JSON-LD, and PayPal commerce hooks.",
+        description:
+          "Creates verified Wikipedia infoboxes, Schema.org JSON-LD, and PayPal commerce hooks.",
       },
       accepted_payments: [
         {
@@ -251,7 +315,8 @@ app.post("/api/v1/aeo/create-entity", async (req: Request, res: Response) => {
           scheme: "exact",
         },
       ],
-      instructions: "Settle via PayPal ($1.00) or send $1.00 equivalent to the target wallet. Resubmit this POST request with header 'X-Payment-Proof: <token_or_txHash>'",
+      instructions:
+        "Settle via PayPal ($1.00) or send $1.00 equivalent to the target wallet. Resubmit this POST request with header 'X-Payment-Proof: <token_or_txHash>'",
     });
   }
 
@@ -268,20 +333,39 @@ app.post("/api/v1/aeo/create-entity", async (req: Request, res: Response) => {
   }
 });
 
-// Settlement webhook for automated payments
+// Real Web2 Settlement Verification Endpoint
 app.post("/api/v1/aeo/verify-payment", async (req: Request, res: Response) => {
-  const { orderId, txHash } = req.body;
-  const receipt = orderId || txHash;
-  if (receipt) {
-    try {
-      await savePaymentReceipt(receipt);
-    } catch (e) {
-      console.warn("DB receipt save skipped, using memory:", e);
-    }
-    fallbackReceipts.add(receipt);
-    return res.json({ status: "settled", receipt });
+  const { orderId, rail } = req.body;
+
+  if (!orderId) {
+    return res.status(400).json({ error: "Missing required parameter: orderId" });
   }
-  return res.status(400).json({ error: "Missing orderId or txHash" });
+
+  // Cryptographic/API verification against PayPal REST gateway
+  const isValid = await verifyPayPalOrder(orderId);
+
+  if (!isValid) {
+    return res.status(400).json({
+      status: "rejected",
+      error: "PayPal order has not been completed or does not meet the $1.00 requirement.",
+    });
+  }
+
+  // Persist verified receipt to PostgreSQL & memory
+  try {
+    await savePaymentReceipt(orderId);
+  } catch (e) {
+    console.warn("Database receipt save skipped, using memory fallback:", e);
+  }
+  fallbackReceipts.add(orderId);
+
+  return res.json({
+    status: "settled",
+    receipt: orderId,
+    protocol: "x402",
+    rail: rail || "paypal",
+    message: "Payment successfully verified. Autonomous entity synthesis unlocked.",
+  });
 });
 
 const PORT = process.env.PORT || 3000;
