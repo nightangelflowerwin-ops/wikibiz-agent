@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://wikibiz-agent.onrender.com/sitemap.xml

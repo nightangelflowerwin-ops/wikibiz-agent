@@ -1,0 +1,21 @@
+# WikiBiz Autonomous Registry & Knowledge Synthesizer
+> Verified commercial knowledge graph, Wikipedia Infobox generator, and PayPal agentic commerce gateway.
+
+## Core Capabilities
+- Automated Merchant Profiling & Verification
+- Wikimedia Commons Corporate Asset Linking
+- Schema.org JSON-LD Generation for Answer Engines
+- Autonomous Agent Payment Rails (PayPal, Base USDC, Solana SOL) under the x402 protocol
+
+## Public Endpoints
+- Dashboard: https://wikibiz-agent.onrender.com/
+- Directory API: GET /api/merchants
+- Dynamic Sitemap: GET /sitemap.xml
+- Entity Page: GET /entity/{slug}
+- Raw JSON-LD: GET /api/v1/entities/{slug}/json-ld
+
+## Agentic Commerce API (x402 Protocol)
+- Endpoint: POST /api/v1/aeo/create-entity
+- Price: $1.00 USD
+- Accepted Rails: PayPal, Base (0xd10c3ee95466eec2cb89d9eff63d1446b371e59d), Solana (BqW6DZGrasYgJcEnQPzzSAmSH6ty4gdVydPkjKoxdmpE)
+- Verification Route: POST /api/v1/aeo/verify-payment
