@@ -1,0 +1,40 @@
+{
+  "protocol": "x402/v1",
+  "name": "WikiBiz AEO & Entity Agent",
+  "version": "1.0.0",
+  "description": "Autonomous Wikipedia-grade entity compilation and AEO Schema.org JSON-LD creation powered by PayPal and multi-chain micro-settlement.",
+  "service_url": "https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity",
+  "verification_url": "https://wikibiz-agent.onrender.com/api/v1/aeo/verify-payment",
+  "pricing": {
+    "amount": "1.00",
+    "currency": "USD"
+  },
+  "accepted_rails": [
+    {
+      "rail": "paypal",
+      "network": "paypal-sandbox",
+      "asset": "USD",
+      "price": "1.00"
+    },
+    {
+      "rail": "base",
+      "network": "base-mainnet",
+      "asset": "USDC",
+      "price": "1.00",
+      "recipient": "0xd10c3ee95466eec2cb89d9eff63d1446b371e59d"
+    },
+    {
+      "rail": "solana",
+      "network": "solana-mainnet",
+      "asset": "SOL",
+      "price": "0.006",
+      "recipient": "BqW6DZGrasYgJcEnQPzzSAmSH6ty4gdVydPkjKoxdmpE"
+    }
+  ],
+  "capabilities": [
+    "mcp_delegation",
+    "aeo_schema_synthesis",
+    "mediawiki_infobox_compilation",
+    "paypal_verification_ledger"
+  ]
+}

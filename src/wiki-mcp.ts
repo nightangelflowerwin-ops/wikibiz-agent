@@ -105,6 +105,57 @@ ${
     };
   }
 );
+// Tool: AEO Entity Generator (Schema.org JSON-LD & Answer Engine Optimization)
+server.tool(
+  "generate_aeo_entity_payload",
+  {
+    companyName: z.string(),
+    founder: z.string(),
+    location: z.string(),
+    employeeCount: z.number(),
+    website: z.string().url(),
+    summary: z.string(),
+  },
+  async ({ companyName, founder, location, employeeCount, website, summary }) => {
+    const schemaJsonLd = {
+      "@context": "https://schema.org",
+      "@type": "Corporation",
+      "name": companyName,
+      "url": website,
+      "description": summary,
+      "founder": {
+        "@type": "Person",
+        "name": founder,
+      },
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": location,
+      },
+      "numberOfEmployees": {
+        "@type": "QuantitativeValue",
+        "value": employeeCount,
+      },
+      "knowsAbout": ["Agentic Commerce", "Verified Enterprise"],
+    };
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              schemaJsonLd,
+              aeoOptimized: true,
+              semanticFingerprint: `urn:entity:${companyName.toLowerCase().replace(/\s+/g, "-")}`,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

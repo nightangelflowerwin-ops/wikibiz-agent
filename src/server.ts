@@ -7,8 +7,19 @@ const app = express();
 app.use(express.json());
 app.use(express.static("public"));
 
+// Wallet addresses and micro-pricing for agentic multi-chain settlement
+const AGENT_SETTLEMENT = {
+  evm_base_wallet: "0xd10c3ee95466eec2cb89d9eff63d1446b371e59d",
+  solana_wallet: "BqW6DZGrasYgJcEnQPzzSAmSH6ty4gdVydPkjKoxdmpE",
+  usdc_amount: "1.00",
+  sol_amount: "0.006", // Equivalent $1.00 micro-fee in SOL
+  fiat_amount: "1.00",
+};
+
 // In-memory registry of created entities for AG Grid
 const merchantRegistry: any[] = [];
+// In-memory ledger of settled payment tokens / tx hashes
+const paidReceipts = new Set<string>();
 
 // Helper to run MCP delegation pipeline
 async function delegateAgentTask(userInput: {
@@ -39,7 +50,7 @@ async function delegateAgentTask(userInput: {
   const wikiClient = new Client({ name: "web-runner", version: "1.0.0" }, { capabilities: {} });
   await wikiClient.connect(wikiTransport);
 
-  // 1. Discovery
+  // 1. Discovery MCP Delegation
   const profileRes: any = await discoveryClient.callTool({
     name: "extract_merchant_profile",
     arguments: {
@@ -59,14 +70,14 @@ async function delegateAgentTask(userInput: {
   });
   const metricsData = JSON.parse(metricsRes.content[0].text);
 
-  // 2. PayPal Agentic Link
+  // 2. PayPal Agentic Link (The core hackathon payment rail)
   let checkoutUrl = "";
   try {
     const payRes: any = await paypalClient.callTool({
       name: "create_merchant_payment_link",
       arguments: {
         companyName: userInput.companyName,
-        unitAmount: "15.00",
+        unitAmount: "1.00",
         currency: "USD",
         memo: "Merchant Profile Verification Badge",
       },
@@ -77,7 +88,7 @@ async function delegateAgentTask(userInput: {
     checkoutUrl = "https://sandbox.paypal.com";
   }
 
-  // 3. Wiki Entity
+  // 3. Wiki Entity & AEO Synthesizer
   const wikiRes: any = await wikiClient.callTool({
     name: "generate_wiki_entity",
     arguments: {
@@ -110,7 +121,9 @@ async function delegateAgentTask(userInput: {
   return record;
 }
 
-// API Routes
+// -------------------------------------------------------------
+// Human Dashboard API Routes (AG Grid)
+// -------------------------------------------------------------
 app.get("/api/merchants", (req, res) => {
   res.json(merchantRegistry);
 });
@@ -124,7 +137,89 @@ app.post("/api/create-entity", async (req, res) => {
   }
 });
 
-const PORT = 3000;
+// -------------------------------------------------------------
+// Autonomous Agent API: x402 Marketplace (PayPal, Base, Solana)
+// -------------------------------------------------------------
+app.post("/api/v1/aeo/create-entity", async (req, res) => {
+  // Support standard x402 headers (V1/V2 headers)
+  const paymentProof =
+    req.headers["x-payment-proof"] ||
+    req.headers["payment-signature"] ||
+    req.headers["x-402-token"];
+
+  // 1. If no payment proof is provided, return HTTP 402 with multi-rail instructions
+  if (!paymentProof || !paidReceipts.has(paymentProof as string)) {
+    const paypalInvoiceToken = `PAYPAL-INV-${Date.now()}`;
+
+    // Standard x402 response headers
+    res.setHeader("X-402-Status", "Payment Required");
+    res.setHeader("X-402-Price-USD", AGENT_SETTLEMENT.fiat_amount);
+    res.setHeader("X-402-Networks", "paypal, base, solana");
+
+    return res.status(402).json({
+      status: 402,
+      error: "Payment Required",
+      protocol: "x402",
+      service: {
+        name: "WikiBiz Autonomous AEO Knowledge Synthesizer",
+        description: "Creates verified Wikipedia infoboxes, Schema.org JSON-LD, and PayPal commerce hooks.",
+      },
+      accepted_payments: [
+        {
+          rail: "paypal",
+          description: "Primary Fiat/Merchant Payment Gateway",
+          amount: AGENT_SETTLEMENT.fiat_amount,
+          currency: "USD",
+          checkout_url: `https://sandbox.paypal.com/checkoutnow?token=${paypalInvoiceToken}`,
+          invoice_id: paypalInvoiceToken,
+        },
+        {
+          rail: "base",
+          network: "base-mainnet",
+          currency: "USDC",
+          amount: AGENT_SETTLEMENT.usdc_amount,
+          payTo: AGENT_SETTLEMENT.evm_base_wallet,
+          scheme: "exact",
+        },
+        {
+          rail: "solana",
+          network: "solana-mainnet",
+          currency: "SOL",
+          amount: AGENT_SETTLEMENT.sol_amount,
+          payTo: AGENT_SETTLEMENT.solana_wallet,
+          scheme: "exact",
+        },
+      ],
+      instructions: "Settle via PayPal ($1.00) or send $1.00 equivalent to the target wallet. Resubmit this POST request with header 'X-Payment-Proof: <token_or_txHash>'",
+    });
+  }
+
+  // 2. Proof validated: run MCP pipeline and return AEO dossier
+  try {
+    const record = await delegateAgentTask(req.body);
+    return res.status(200).json({
+      status: "success",
+      aeo_status: "Verified & Optimized for LLM Answer Engines",
+      payment_receipt: paymentProof,
+      entity: record,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Settlement webhook for automated payments
+app.post("/api/v1/aeo/verify-payment", (req, res) => {
+  const { orderId, txHash } = req.body;
+  const receipt = orderId || txHash;
+  if (receipt) {
+    paidReceipts.add(receipt);
+    return res.json({ status: "settled", receipt });
+  }
+  return res.status(400).json({ error: "Missing orderId or txHash" });
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`WikiBiz Agent UI running at: http://localhost:${PORT}`);
 });
