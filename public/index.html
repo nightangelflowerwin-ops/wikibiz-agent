@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WikiBiz - Autonomous Merchant Entity Agent</title>
+  <!-- AG Grid Community CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community/dist/ag-grid-community.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-grid.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-theme-alpine.css">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f4f6f8; color: #333; }
+    header { background: #002c8b; color: white; padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; }
+    .container { display: flex; gap: 20px; padding: 24px; max-width: 1400px; margin: auto; }
+    .panel { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .form-panel { width: 350px; flex-shrink: 0; }
+    .main-panel { flex-grow: 1; display: flex; flex-direction: column; gap: 20px; }
+    input, button { width: 100%; padding: 10px; margin-bottom: 12px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; }
+    button { background: #0070ba; color: white; font-weight: bold; border: none; cursor: pointer; }
+    button:hover { background: #005ea6; }
+    #preview-area { min-height: 250px; border: 1px solid #e1e4e8; border-radius: 4px; padding: 16px; background: #fafbfc; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h2>WikiBiz: Autonomous Entity & Commerce Agent</h2>
+  <span>PayPal AI Hackathon 2026</span>
+</header>
+
+<div class="container">
+  <div class="panel form-panel">
+    <h3>New Entity Prompt</h3>
+    <p style="font-size: 13px; color: #666;">Provide business parameters to delegate to MCP Discovery, Wiki, & PayPal workers.</p>
+    <form id="entity-form">
+      <input type="text" id="companyName" placeholder="Company Name (e.g. Savanna Roast)" required value="Savanna Roast Coffee">
+      <input type="text" id="founder" placeholder="Founder Name" required value="Alex Ndung'u">
+      <input type="text" id="location" placeholder="Headquarters Location" required value="Machakos, Kenya">
+      <input type="number" id="claimedEmployees" placeholder="Number of Employees" required value="18">
+      <input type="url" id="website" placeholder="Website URL" required value="https://example.com">
+      <button type="submit" id="submit-btn">Run MCP Delegation</button>
+    </form>
+    <div id="loader" style="display:none; color: #0070ba; font-size: 14px; text-align: center;">Delegating tasks across MCP servers...</div>
+  </div>
+
+  <div class="main-panel">
+    <div class="panel">
+      <h3>Live Wikipedia Output Preview</h3>
+      <div id="preview-area">
+        <i>Submit an entity on the left to watch the autonomous MediaWiki & PayPal engine render in real time.</i>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Verified Entity Ledger (AG Grid)</h3>
+      <div id="myGrid" class="ag-theme-alpine" style="height: 240px; width: 100%;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let gridApi;
+
+  const gridOptions = {
+    columnDefs: [
+      { field: "id", headerName: "Entity ID", width: 110 },
+      { field: "companyName", headerName: "Company", flex: 1 },
+      { field: "founder", headerName: "Founder", flex: 1 },
+      { field: "location", headerName: "Location", flex: 1 },
+      { field: "employees", headerName: "Headcount", width: 110 },
+      { field: "bracket", headerName: "Scale Tier", flex: 1 },
+      { field: "status", headerName: "Verification", width: 140 }
+    ],
+    rowData: []
+  };
+
+  const gridDiv = document.querySelector('#myGrid');
+  gridApi = agGrid.createGrid(gridDiv, gridOptions);
+
+  document.getElementById("entity-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("submit-btn");
+    const loader = document.getElementById("loader");
+
+    btn.disabled = true;
+    loader.style.display = "block";
+
+    const payload = {
+      companyName: document.getElementById("companyName").value,
+      founder: document.getElementById("founder").value,
+      location: document.getElementById("location").value,
+      claimedEmployees: Number(document.getElementById("claimedEmployees").value),
+      website: document.getElementById("website").value,
+    };
+
+    try {
+      const res = await fetch("/api/create-entity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById("preview-area").innerHTML = data.record.htmlPreview;
+        // Refresh table
+        const listRes = await fetch("/api/merchants");
+        const listData = await listRes.json();
+        gridApi.setGridOption("rowData", listData);
+      }
+    } catch (err) {
+      alert("Error executing delegation: " + err.message);
+    } finally {
+      btn.disabled = false;
+      loader.style.display = "none";
+    }
+  });
+</script>
+
+</body>
+</html>
