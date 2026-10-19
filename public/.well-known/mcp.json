@@ -1,0 +1,39 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schema/server.json",
+  "name": "wikibiz-registry",
+  "version": "1.0.0",
+  "description": "Autonomous merchant profiling, Wikipedia Infobox synthesis, and multi-rail payment settlement for all AI agents.",
+  "transport": {
+    "type": "http",
+    "endpoint": "https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity"
+  },
+  "tools": [
+    {
+      "name": "create_merchant_entity",
+      "description": "Synthesize a verified corporate knowledge graph, Wikipedia infobox, and Schema.org JSON-LD dossier. Requires $1.00 USD settlement via x402 header.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "companyName": { "type": "string", "description": "Legal business or entity name" },
+          "website": { "type": "string", "description": "Official company URL" },
+          "founder": { "type": "string", "description": "Primary founder or executive name" },
+          "location": { "type": "string", "description": "City, State or Country" },
+          "claimedEmployees": { "type": "number", "description": "Estimated workforce count" }
+        },
+        "required": ["companyName", "website", "founder", "location", "claimedEmployees"]
+      }
+    },
+    {
+      "name": "verify_payment_receipt",
+      "description": "Verify PayPal invoice token, Base EVM txHash, or Solana signature to unlock 402 settlement.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "receipt": { "type": "string", "description": "PayPal order ID, Base 0x hash, or Solana signature" },
+          "rail": { "type": "string", "enum": ["paypal", "base", "solana"], "description": "Target settlement rail" }
+        },
+        "required": ["receipt"]
+      }
+    }
+  ]
+}
