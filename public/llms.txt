@@ -2,20 +2,40 @@
 > Verified commercial knowledge graph, Wikipedia Infobox generator, and PayPal agentic commerce gateway.
 
 ## Core Capabilities
-- Automated Merchant Profiling & Verification
-- Wikimedia Commons Corporate Asset Linking
-- Schema.org JSON-LD Generation for Answer Engines
+- Automated Merchant Profiling & Headcount Verification
+- Wikimedia Commons Corporate Asset Resolution
+- Schema.org JSON-LD Generation for Answer Engines (AEO)
 - Autonomous Agent Payment Rails (PayPal, Base USDC, Solana SOL) under the x402 protocol
 
 ## Public Endpoints
 - Dashboard: https://wikibiz-agent.onrender.com/
-- Directory API: GET /api/merchants
-- Dynamic Sitemap: GET /sitemap.xml
-- Entity Page: GET /entity/{slug}
-- Raw JSON-LD: GET /api/v1/entities/{slug}/json-ld
+- Directory API: GET https://wikibiz-agent.onrender.com/api/merchants
+- Dynamic XML Sitemap: GET https://wikibiz-agent.onrender.com/sitemap.xml
+- Entity Page: GET https://wikibiz-agent.onrender.com/entity/{slug}
+- Raw JSON-LD: GET https://wikibiz-agent.onrender.com/api/v1/entities/{slug}/json-ld
 
 ## Agentic Commerce API (x402 Protocol)
-- Endpoint: POST /api/v1/aeo/create-entity
-- Price: $1.00 USD
-- Accepted Rails: PayPal, Base (0xd10c3ee95466eec2cb89d9eff63d1446b371e59d), Solana (BqW6DZGrasYgJcEnQPzzSAmSH6ty4gdVydPkjKoxdmpE)
-- Verification Route: POST /api/v1/aeo/verify-payment
+- Endpoint: POST https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity
+- Settlement Price: $1.00 USD
+- Accepted Rails:
+  - PayPal (Order Capture Verification)
+  - Base Mainnet USDC: 0xd10c3ee95466eec2cb89d9eff63d1446b371e59d
+  - Solana Mainnet SOL: BqW6DZGrasYgJcEnQPzzSAmSH6ty4gdVydPkjKoxdmpE
+- Settlement Verification Endpoint: POST https://wikibiz-agent.onrender.com/api/v1/aeo/verify-payment
+
+### Autonomous Execution Example (cURL)
+1. Query service without payment token to receive 402 challenge:
+   curl -i -X POST https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity \
+     -H "Content-Type: application/json" \
+     -d '{"companyName":"Test Co","website":"https://test.co","founder":"Jane Doe","location":"San Francisco, CA","claimedEmployees":10}'
+
+2. Settle payment and verify receipt:
+   curl -i -X POST https://wikibiz-agent.onrender.com/api/v1/aeo/verify-payment \
+     -H "Content-Type: application/json" \
+     -d '{"orderId":"PAYPAL-INV-TEST-RECEIPT"}'
+
+3. Submit request with confirmed proof header:
+   curl -i -X POST https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity \
+     -H "Content-Type: application/json" \
+     -H "X-Payment-Proof: PAYPAL-INV-TEST-RECEIPT" \
+     -d '{"companyName":"Test Co","website":"https://test.co","founder":"Jane Doe","location":"San Francisco, CA","claimedEmployees":10}'

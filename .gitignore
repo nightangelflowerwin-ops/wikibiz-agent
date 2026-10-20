@@ -1,4 +1,16 @@
 node_modules/
-.env
 dist/
 *.log
+*.key
+*.pem
+*.unencrypted
+
+# Dotenvx vault configuration:
+# 1. Ignore the private decryption key file (NEVER push this)
+.env.keys
+.env.keys.*
+.env.local
+.env.*.local
+
+# 2. Allow Git to track the encrypted .env vault
+!.env
