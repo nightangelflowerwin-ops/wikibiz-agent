@@ -1,155 +1,111 @@
-/**
- * WikiBiz Autonomous A2A Delegation Runner
- * Probes peer agent endpoints, negotiates x402 challenge terms, executes settlement,
- * and exchanges verifiable knowledge dossiers.
- */
+import { ethers } from "ethers";
 
-interface PeerSettlementChallenge {
+interface PaymentChallenge {
   status: number;
   acceptedRails: string[];
   priceUsd: string;
   payToEVM?: string;
   payToSolana?: string;
-  paypalCheckoutUrl?: string;
-  invoiceId?: string;
 }
 
-export class OutboundA2AAgent {
-  private agentName: string;
-  private defaultEvmPrivateKey: string;
+const PEER_AGENT_URL = process.env.PEER_AGENT_URL || "https://wikibiz-agent.onrender.com";
+const TARGET_ENDPOINT = `${PEER_AGENT_URL}/api/v1/aeo/create-entity`;
 
-  constructor(name = "WikiBiz-Buyer-Agent") {
-    this.agentName = name;
-    this.defaultEvmPrivateKey = process.env.AGENT_EVM_PRIVATE_KEY || "0x_mock_agent_key";
+async function executeBaseSettlement(recipientAddress: string, amountEth: string = "0.0001"): Promise<string> {
+  const rpcUrl = process.env.BASE_RPC_URL;
+  if (!rpcUrl) {
+    throw new Error("Missing BASE_RPC_URL in decrypted environment.");
   }
 
-  /**
-   * Probes any remote MCP or HTTP agent endpoint to trigger negotiation
-   */
-  async probePeerService(targetUrl: string, taskPayload: any): Promise<{ challenge?: PeerSettlementChallenge; success?: any }> {
-    console.log(`[A2A Client] Dispatching request to peer agent: ${targetUrl}`);
-    
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": `WikiBiz-A2A-Client/1.0.0 (+https://wikibiz-agent.onrender.com)`,
-      },
-      body: JSON.stringify(taskPayload),
-    });
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
 
-    if (response.status === 402) {
-      const challengeHeaders = {
-        status: 402,
-        acceptedRails: (response.headers.get("X-Accept-Payment") || "paypal, base, solana").split(",").map((s) => s.trim()),
-        priceUsd: response.headers.get("X-Payment-Amount") || "1.00",
-        payToEVM: response.headers.get("X-Payment-Recipient-EVM") || undefined,
-        payToSolana: response.headers.get("X-Payment-Recipient-Solana") || undefined,
-      };
-
-      const body = await response.json();
-      console.log(`[A2A Client] 402 Payment Challenge received from peer:`, challengeHeaders);
-      return {
-        challenge: {
-          ...challengeHeaders,
-          paypalCheckoutUrl: body.accepted_payments?.find((p: any) => p.rail === "paypal")?.checkout_url,
-          invoiceId: body.accepted_payments?.find((p: any) => p.rail === "paypal")?.invoice_id,
-        },
-      };
-    }
-
-    if (response.ok) {
-      return { success: await response.json() };
-    }
-
-    throw new Error(`Unexpected peer agent response: HTTP ${response.status}`);
+  let wallet: ethers.Wallet;
+  if (process.env.AGENT_EVM_PRIVATE_KEY) {
+    wallet = new ethers.Wallet(process.env.AGENT_EVM_PRIVATE_KEY, provider);
+  } else if (process.env.AGENT_MNEMONIC) {
+    wallet = ethers.Wallet.fromPhrase(process.env.AGENT_MNEMONIC, provider);
+  } else {
+    throw new Error("Missing AGENT_EVM_PRIVATE_KEY or AGENT_MNEMONIC in environment.");
   }
 
-  /**
-   * Autonomous settlement negotiator
-   */
-  async settleChallenge(peerChallenge: PeerSettlementChallenge, preferredRail: "paypal" | "base" | "solana" = "paypal"): Promise<string> {
-    console.log(`[A2A Client] Negotiating settlement on rail: ${preferredRail}`);
+  console.log(`[A2A Client] Broadcasting live settlement from ${wallet.address} to ${recipientAddress}...`);
+  const tx = await wallet.sendTransaction({
+    to: recipientAddress,
+    value: ethers.parseEther(amountEth),
+  });
 
-    if (preferredRail === "paypal") {
-      // In production: trigger agent PayPal vault capture or sandbox invoice token
-      const simulatedToken = peerChallenge.invoiceId || `PAYPAL-INV-SIM-${Date.now()}`;
-      console.log(`[A2A Client] Captured agent PayPal token: ${simulatedToken}`);
-      return simulatedToken;
-    }
+  console.log(`[A2A Client] Transaction submitted: ${tx.hash}. Awaiting on-chain confirmation...`);
+  const receipt = await tx.wait(1);
 
-    if (preferredRail === "base") {
-      // EVM Base transaction execution
-      const txHash = `0xSIM${Date.now().toString(16).padStart(60, "0")}`;
-      console.log(`[A2A Client] Executed USDC settlement to ${peerChallenge.payToEVM}: ${txHash}`);
-      return txHash;
-    }
-
-    const solanaSig = `SOL-SIM-${Date.now()}-${"1".repeat(50)}`;
-    return solanaSig;
+  if (!receipt || receipt.status !== 1) {
+    throw new Error(`Transaction failed or reverted on Base: ${tx.hash}`);
   }
 
-  /**
-   * Resubmits the task with proof of payment
-   */
-  async executeDelegation(targetUrl: string, taskPayload: any, receiptProof: string) {
-    console.log(`[A2A Client] Resubmitting task with verified payment proof header...`);
-
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Payment-Proof": receiptProof,
-        "User-Agent": `WikiBiz-A2A-Client/1.0.0 (+https://wikibiz-agent.onrender.com)`,
-      },
-      body: JSON.stringify(taskPayload),
-    });
-
-    const data = await response.json();
-    console.log(`[A2A Client] Task fulfilled by peer agent! HTTP ${response.status}`);
-    return data;
-  }
+  console.log(`[A2A Client] Transaction confirmed on Base block: ${receipt.blockNumber}`);
+  return tx.hash;
 }
 
-// Self-executing runner verification against live Render deployment
-async function runA2ADelegationCycle() {
-  const buyer = new OutboundA2AAgent();
-  const targetService = "https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity";
-  const verificationService = "https://wikibiz-agent.onrender.com/api/v1/aeo/verify-payment";
-
-  const task = {
-    companyName: "Nexus Autonomous Systems",
-    website: "https://nexus-agent.network",
-    founder: "Agent-0x402",
-    location: "Zug, Switzerland",
-    claimedEmployees: 8,
+async function runDelegationPipeline() {
+  const requestPayload = {
+    entityName: "WikiBiz Autonomous Network",
+    jurisdiction: "US-DE",
+    metadata: {
+      tags: ["AEO", "autonomous-settlement", "MCP"],
+      description: "Entity synthesis executed via x402 autonomous payment rails."
+    }
   };
 
-  // 1. Probe & receive challenge
-  const probe = await buyer.probePeerService(targetService, task);
-  if (!probe.challenge) {
-    console.log("No challenge required, execution completed.");
+  console.log(`[A2A Client] Dispatching request to peer agent: ${TARGET_ENDPOINT}`);
+  
+  // Step 1: Initial request to trigger x402 negotiation
+  const initialResponse = await fetch(TARGET_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestPayload)
+  });
+
+  if (initialResponse.status !== 402) {
+    const directResult = await initialResponse.json();
+    console.log("[A2A Client] Server responded without payment challenge:", directResult);
     return;
   }
 
-  // 2. Settle payment
-  const proof = await buyer.settleChallenge(probe.challenge, "paypal");
+  const challenge: PaymentChallenge = await initialResponse.json();
+  console.log("[A2A Client] 402 Payment Challenge received from peer:", challenge);
 
-  // 3. Register payment proof with verifier
-  console.log(`[A2A Client] Submitting receipt to settlement engine...`);
-  const verifyRes = await fetch(verificationService, {
+  let paymentProofHeader = "";
+
+  // Step 2: Handle Payment Rails
+  if (challenge.acceptedRails.includes("base-mainnet") && challenge.payToEVM) {
+    console.log("[A2A Client] Negotiating settlement on rail: base-mainnet");
+    const txHash = await executeBaseSettlement(challenge.payToEVM, "0.0001");
+    paymentProofHeader = `base:${txHash}`;
+  } else {
+    throw new Error(`Unsupported or unconfigured settlement rail. Offered: ${challenge.acceptedRails.join(", ")}`);
+  }
+
+  // Step 3: Resubmit with verified payment proof
+  console.log(`[A2A Client] Resubmitting task with verified payment proof: ${paymentProofHeader}`);
+  const authorizedResponse = await fetch(TARGET_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orderId: proof }),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Payment-Proof": paymentProofHeader
+    },
+    body: JSON.stringify(requestPayload)
   });
-  console.log(`[A2A Client] Verification status: ${verifyRes.status}`);
 
-  // 4. Claim synthesized entity
-  const result = await buyer.executeDelegation(targetService, task, proof);
-  console.log(`[A2A Client] Synthesized Dossier Available:`, result.entity?.companyName);
+  if (!authorizedResponse.ok) {
+    const errorBody = await authorizedResponse.text();
+    throw new Error(`Execution rejected with HTTP ${authorizedResponse.status}: ${errorBody}`);
+  }
+
+  const dossier = await authorizedResponse.json();
+  console.log(`[A2A Client] Task fulfilled successfully! HTTP ${authorizedResponse.status}`);
+  console.log("[A2A Client] Synthesized Dossier Available:", JSON.stringify(dossier, null, 2));
 }
 
-// Run if executed directly
-if (process.argv[1]?.includes("outbound-a2a-runner")) {
-  runA2ADelegationCycle().catch(console.error);
-}
+runDelegationPipeline().catch((err) => {
+  console.error("[A2A Client Execution Error]:", err.message);
+  process.exit(1);
+});
