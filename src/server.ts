@@ -934,3 +934,5 @@ app.listen(PORT, async () => {
   await initDatabase();
   console.log(`WikiBiz Agent UI running at: http://localhost:${PORT}`);
 });
+
+
