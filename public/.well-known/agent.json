@@ -1,0 +1,17 @@
+{
+  "name": "wikibiz-aeo-agent",
+  "description": "Autonomous corporate verification, Wikipedia infobox synthesis, and x402 multi-rail settlement engine.",
+  "url": "https://wikibiz-agent.onrender.com",
+  "version": "1.0.0",
+  "protocol": "a2a-v1",
+  "capabilities": {
+    "discovery": true,
+    "settlement_rails": ["base-mainnet", "paypal", "solana-mainnet"],
+    "price_usd": "1.00"
+  },
+  "endpoints": {
+    "task": "https://wikibiz-agent.onrender.com/api/v1/aeo/create-entity",
+    "verify": "https://wikibiz-agent.onrender.com/api/v1/aeo/verify-payment",
+    "mcp_sse": "https://wikibiz-agent.onrender.com/sse"
+  }
+}
